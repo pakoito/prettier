@@ -39,6 +39,61 @@ function embed(path, print, textToDoc /*, options */) {
         return transformCssDoc(doc, path, print);
       }
 
+      /**
+       * Angular Components:
+       * - Inline HTML template
+       * - Inline CSS styles
+       *
+       * @Component({
+       *  template: `<div>...</div>`
+       * })
+       */
+      const isPropertyValue = !!(parent && parent.type === "Property");
+      const isWithinArrayValueFromProperty = !!(
+        parent &&
+        (parent.type === "ArrayExpression" && parentParent.type === "Property")
+      );
+      /**
+       * HTML Template
+       */
+      if (
+        isPropertyValue &&
+        isPropertyWithinAngularComponentDecorator(path, 3)
+      ) {
+        if (parent.key && parent.key.name === "template") {
+          const rawHTML = node.quasis[0].value.raw;
+          const formattedHTML = stripLeadingHardline(
+            textToDoc(rawHTML, { parser: "parse5" })
+          );
+          return concat(["`", indent(formattedHTML), hardline, "`"]);
+        }
+      }
+
+      /**
+       * CSS Styles
+       */
+      if (
+        isWithinArrayValueFromProperty &&
+        isPropertyWithinAngularComponentDecorator(path, 4)
+      ) {
+        if (parentParent.key && parentParent.key.name === "styles") {
+          // Get full template literal with expressions replaced by placeholders
+          const rawQuasis = node.quasis.map(q => q.value.raw);
+          let placeholderID = 0;
+          const text = rawQuasis.reduce((prevVal, currVal, idx) => {
+            return idx == 0
+              ? currVal
+              : prevVal +
+                  "@prettier-placeholder-" +
+                  placeholderID++ +
+                  "-id" +
+                  currVal;
+          }, "");
+          const doc = textToDoc(text, { parser: "css" });
+          return transformCssDoc(doc, path, print);
+        }
+      }
+
       /*
        * react-relay and graphql-tag
        * graphql`...`
@@ -190,6 +245,33 @@ function embed(path, print, textToDoc /*, options */) {
     const doc = textToDoc(text, { parser: "markdown", __inJsTemplate: true });
     return docUtils.stripTrailingHardline(escapeBackticks(doc));
   }
+}
+
+function isPropertyWithinAngularComponentDecorator(path, parentIndexToCheck) {
+  const parent = path.getParentNode(parentIndexToCheck);
+  return !!(
+    parent &&
+    parent.type === "Decorator" &&
+    parent.expression &&
+    parent.expression.type === "CallExpression" &&
+    parent.expression.callee &&
+    parent.expression.callee.name === "Component"
+  );
+}
+
+function stripLeadingHardline(doc) {
+  // HACK remove leading hardline
+  if (
+    doc.type === "concat" &&
+    doc.parts.length === 3 &&
+    doc.parts[0].type === "concat" &&
+    doc.parts[0].parts.length === 2 &&
+    doc.parts[0].parts[0].hard &&
+    doc.parts[0].parts[1].type === "break-parent"
+  ) {
+    return doc.parts[1];
+  }
+  return doc;
 }
 
 function getIndentation(str) {
